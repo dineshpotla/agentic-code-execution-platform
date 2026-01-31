@@ -27,8 +27,9 @@ End-to-end starter project for an LLM that writes and executes Python in a locke
    ```
    OPENAI_API_KEY=YOUR_KEY
    OPENAI_MODEL=gpt-4o-mini
-   GEMINI_API_KEY=YOUR_KEY
-   GEMINI_MODEL=models/gemini-2.5-pro
+   NV_API_KEY=YOUR_KEY
+   NV_API_MODEL=moonshotai/kimi-k2.5
+   NV_API_URL=https://integrate.api.nvidia.com/v1/chat/completions
    ```
 
 ## Run

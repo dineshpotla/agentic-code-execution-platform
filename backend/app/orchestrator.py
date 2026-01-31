@@ -3,8 +3,7 @@ import os
 import re
 from typing import Any, Optional
 
-from google import genai
-from google.genai import errors as genai_errors
+import requests
 from openai import OpenAI
 
 from app.llm.tools import tools
@@ -38,16 +37,18 @@ class AnalysisPipeline:
                 pass
         if text.strip():
             return {"tool": "none", "response": text.strip()}
-        return {"tool": "error", "error": "Gemini returned empty response."}
+        return {"tool": "error", "error": "Model returned empty response."}
 
     def __init__(self, sandbox: Optional[CodeSandbox] = None) -> None:
         self.sandbox = sandbox or CodeSandbox()
         self.openai_key = os.getenv("OPENAI_API_KEY")
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
+        self.nvapi_key = os.getenv("NV_API_KEY")
         self.openai_client = OpenAI(api_key=self.openai_key) if self.openai_key else None
-        self.gemini_client = genai.Client(api_key=self.gemini_key) if self.gemini_key else None
         self.openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        self.gemini_model = os.getenv("GEMINI_MODEL", "models/gemini-2.5-pro")
+        self.nvapi_model = os.getenv("NV_API_MODEL", "moonshotai/kimi-k2.5")
+        self.nvapi_url = os.getenv(
+            "NV_API_URL", "https://integrate.api.nvidia.com/v1/chat/completions"
+        )
 
     def _system_prompt(self) -> str:
         return (
@@ -74,6 +75,10 @@ class AnalysisPipeline:
             "12. Use only these available packages unless you list them in "
             "requirements: "
             f"{self._PREINSTALLED_MODULES}.\n"
+            "13. Final responses should be concise and directly answer the user's question. "
+            "Avoid repeating intermediate logs or unnecessary details.\n"
+            "14. Before finalizing, verify the answer satisfies the user's question. "
+            "If not, update the plan and continue.\n"
         )
 
     def _requirements_to_allowed(self, requirements: list[str]) -> set[str]:
@@ -86,11 +91,11 @@ class AnalysisPipeline:
         return allowed
 
     def _provider(self) -> str:
-        if self.gemini_key:
-            return "gemini"
+        if self.nvapi_key:
+            return "nvidia"
         return "openai"
 
-    def _gemini_tool_prompt(self, user_query: str, file_names: list[str]) -> str:
+    def _nvidia_tool_prompt(self, user_query: str, file_names: list[str]) -> str:
         return (
             f"{self._system_prompt()}\n"
             "Return a single JSON object and nothing else.\n"
@@ -102,7 +107,7 @@ class AnalysisPipeline:
             f"Request: {user_query}\n"
         )
 
-    def _gemini_plan_prompt(self, user_query: str, file_names: list[str]) -> str:
+    def _nvidia_plan_prompt(self, user_query: str, file_names: list[str]) -> str:
         return (
             f"{self._system_prompt()}\n"
             "Create a multi-step analysis plan. Return JSON only with:\n"
@@ -111,7 +116,7 @@ class AnalysisPipeline:
             f"Request: {user_query}\n"
         )
 
-    def _gemini_step_prompt(
+    def _nvidia_step_prompt(
         self, user_query: str, file_names: list[str], step: dict, prior_outputs: list[str]
     ) -> str:
         return (
@@ -127,7 +132,7 @@ class AnalysisPipeline:
             f"Prior outputs: {prior_outputs}\n"
         )
 
-    def _gemini_refine_prompt(
+    def _nvidia_refine_prompt(
         self, user_query: str, file_names: list[str], step: dict, error: str
     ) -> str:
         return (
@@ -140,7 +145,7 @@ class AnalysisPipeline:
             f"Error: {error}\n"
         )
 
-    def _gemini_refine_prompt_with_attempt(
+    def _nvidia_refine_prompt_with_attempt(
         self,
         user_query: str,
         file_names: list[str],
@@ -174,42 +179,39 @@ class AnalysisPipeline:
             f"Attempt: {attempt}\n"
         )
 
-    def _gemini_judge_prompt(
+    def _nvidia_judge_prompt(
         self, user_query: str, plan: dict, outputs: list[str]
     ) -> str:
         return (
             f"{self._system_prompt()}\n"
-            "Judge if the analysis is complete. Return JSON only:\n"
-            '{"done":true,"reason":"..."}\n'
+            "Judge if the analysis fully answers the user's question. Return JSON only:\n"
+            '{"done":true,"reason":"...","missing":"..."}\n'
             f"Request: {user_query}\n"
             f"Plan: {plan}\n"
             f"Outputs: {outputs}\n"
         )
 
-    def _call_gemini_for_tool(self, user_query: str, file_names: list[str]) -> dict:
+    def _call_nvidia_text(self, prompt: str) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.nvapi_key}",
+            "Accept": "application/json",
+        }
+        payload = {
+            "model": self.nvapi_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 16384,
+            "temperature": 1.0,
+            "top_p": 1.0,
+            "stream": False,
+            "chat_template_kwargs": {"thinking": True},
+        }
         try:
-            response = self.gemini_client.models.generate_content(
-                model=self.gemini_model,
-                contents=self._gemini_tool_prompt(user_query, file_names),
-            )
-            text = response.text or ""
-            return self._extract_json(text)
-        except genai_errors.ClientError as exc:
-            return {"tool": "error", "error": f"Gemini API error: {exc}"}
+            response = requests.post(self.nvapi_url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
         except Exception as exc:  # noqa: BLE001
-            return {"tool": "error", "error": f"Gemini call failed: {exc}"}
-
-    def _call_gemini_text(self, prompt: str) -> str:
-        try:
-            response = self.gemini_client.models.generate_content(
-                model=self.gemini_model,
-                contents=prompt,
-            )
-            return response.text or ""
-        except genai_errors.ClientError as exc:
-            return f"Gemini API error: {exc}"
-        except Exception as exc:  # noqa: BLE001
-            return f"Gemini call failed: {exc}"
+            return f"NVIDIA API error: {exc}"
 
     def process(
         self,
@@ -223,10 +225,10 @@ class AnalysisPipeline:
                 status_cb(message)
 
         fast_response = "return only" in user_query.lower() or "no explanation" in user_query.lower()
-        if not self.openai_key and not self.gemini_key:
+        if not self.openai_key and not self.nvapi_key:
             return {
                 "success": False,
-                "error": "Set OPENAI_API_KEY or GEMINI_API_KEY before running.",
+                "error": "Set OPENAI_API_KEY or NV_API_KEY before running.",
             }
 
         messages = [
@@ -240,11 +242,11 @@ class AnalysisPipeline:
             },
         ]
 
-        if self._provider() == "gemini":
+        if self._provider() == "nvidia":
             file_names = list(uploaded_files.keys())
             status("planning analysis")
-            plan_response = self._call_gemini_text(
-                self._gemini_plan_prompt(user_query, file_names)
+            plan_response = self._call_nvidia_text(
+                self._nvidia_plan_prompt(user_query, file_names)
             )
             plan = self._extract_json(plan_response)
             if plan.get("tool") == "error":
@@ -262,8 +264,8 @@ class AnalysisPipeline:
             for idx, step in enumerate(steps[:max_steps], start=1):
                 goal = step.get("goal", "step")
                 status(f"step {idx}/{max_steps}: {goal}")
-                step_result = self._call_gemini_text(
-                    self._gemini_step_prompt(user_query, file_names, step, outputs)
+                step_result = self._call_nvidia_text(
+                    self._nvidia_step_prompt(user_query, file_names, step, outputs)
                 )
                 action = self._extract_json(step_result)
                 if action.get("tool") == "error":
@@ -291,8 +293,8 @@ class AnalysisPipeline:
                 while not result.get("success") and attempt < max_retries:
                     attempt += 1
                     status(f"refining after error in step {idx}/{max_steps}")
-                    refine = self._call_gemini_text(
-                        self._gemini_refine_prompt_with_attempt(
+                    refine = self._call_nvidia_text(
+                        self._nvidia_refine_prompt_with_attempt(
                             user_query,
                             file_names,
                             step,
@@ -335,10 +337,17 @@ class AnalysisPipeline:
 
                 status("judging completion")
                 judge = self._extract_json(
-                    self._call_gemini_text(self._gemini_judge_prompt(user_query, plan, outputs))
+                    self._call_nvidia_text(self._nvidia_judge_prompt(user_query, plan, outputs))
                 )
                 if judge.get("done") is True:
                     break
+                if judge.get("missing"):
+                    status("updating plan")
+                    plan_response = self._call_nvidia_text(
+                        self._nvidia_plan_prompt(user_query, file_names)
+                    )
+                    plan = self._extract_json(plan_response)
+                    steps = plan.get("steps", steps)
 
             if fast_response:
                 status("done")
@@ -350,7 +359,7 @@ class AnalysisPipeline:
                 }
 
             status("summarizing")
-            final_text = self._call_gemini_text(
+            final_text = self._call_nvidia_text(
                 "Summarize the analysis clearly based on these outputs:\n"
                 + "\n".join(outputs)
             )
