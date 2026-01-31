@@ -99,3 +99,14 @@ def get_result(run_id: str):
     if "error" in result:
         return JSONResponse({"error": result["error"]}, status_code=400)
     return result
+
+
+@app.get("/api/provider")
+def get_provider():
+    return {
+        "provider": pipeline._provider(),
+        "nv_api_key_present": bool(os.getenv("NV_API_KEY")),
+        "openai_key_present": bool(os.getenv("OPENAI_API_KEY")),
+        "nv_api_model": os.getenv("NV_API_MODEL"),
+        "nv_api_url": os.getenv("NV_API_URL"),
+    }

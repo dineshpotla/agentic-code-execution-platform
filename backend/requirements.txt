@@ -3,5 +3,5 @@ uvicorn[standard]
 python-multipart
 openai
 docker
-google-genai
+requests
 python-dotenv
