@@ -195,6 +195,7 @@
       const statusEl = document.getElementById("status");
       const messagesEl = document.getElementById("messages");
       const analyzeBtn = document.getElementById("analyzeBtn");
+      const sessionId = crypto.randomUUID();
 
       const addMessage = (role, text, artifacts = []) => {
         const wrapper = document.createElement("div");
@@ -238,6 +239,7 @@
         for (const file of files) {
           formData.append("files", file);
         }
+        formData.append("session_id", sessionId);
         formData.append("query", query);
 
         try {
@@ -302,6 +304,21 @@
           analyzeBtn.disabled = false;
         }
       });
+
+      const clearBtn = document.createElement("button");
+      clearBtn.textContent = "Clear Chat";
+      clearBtn.style.background = "var(--primary-ghost)";
+      clearBtn.style.color = "var(--primary)";
+      clearBtn.addEventListener("click", async () => {
+        await fetch("/api/memory/clear", {
+          method: "POST",
+          headers: {"Content-Type": "application/x-www-form-urlencoded"},
+          body: new URLSearchParams({session_id: sessionId}),
+        });
+        messagesEl.innerHTML = "";
+        setStatus("idle");
+      });
+      document.querySelector(".composer-actions").appendChild(clearBtn);
     </script>
   </body>
 </html>
