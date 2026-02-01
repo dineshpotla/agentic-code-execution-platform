@@ -79,6 +79,18 @@ class AnalysisPipeline:
             "Avoid repeating intermediate logs or unnecessary details.\n"
             "14. Before finalizing, verify the answer satisfies the user's question. "
             "If not, update the plan and continue.\n"
+            "15. Output format:\n"
+            "<exact answer for user question very concise>\n"
+            "<optional insights only if necessary>\n"
+            "16. Use deep thinking for complex tasks before answering.\n"
+        )
+
+    def _output_prompt(self, user_query: str, outputs: list[str]) -> str:
+        return (
+            "Return only:\n"
+            "<pin point answer for user original question>\n\n"
+            f"Question: {user_query}\n"
+            f"Outputs: {outputs}\n"
         )
 
     def _requirements_to_allowed(self, requirements: list[str]) -> set[str]:
@@ -95,7 +107,10 @@ class AnalysisPipeline:
             return "nvidia"
         return "openai"
 
-    def _nvidia_tool_prompt(self, user_query: str, file_names: list[str]) -> str:
+    def _nvidia_tool_prompt(
+        self, user_query: str, file_names: list[str], memory: dict | None = None
+    ) -> str:
+        memory = memory or {"summary": "", "recent": []}
         return (
             f"{self._system_prompt()}\n"
             "Return a single JSON object and nothing else.\n"
@@ -103,22 +118,33 @@ class AnalysisPipeline:
             '{"tool":"execute_python","code":"...","requirements":["pkg"],"reasoning":"..."}\n'
             "If no code is needed, respond with:\n"
             '{"tool":"none","response":"..."}\n'
+            f"Conversation memory: {memory}\n"
             f"Files available: {file_names}\n"
             f"Request: {user_query}\n"
         )
 
-    def _nvidia_plan_prompt(self, user_query: str, file_names: list[str]) -> str:
+    def _nvidia_plan_prompt(
+        self, user_query: str, file_names: list[str], memory: dict | None = None
+    ) -> str:
+        memory = memory or {"summary": "", "recent": []}
         return (
             f"{self._system_prompt()}\n"
             "Create a multi-step analysis plan. Return JSON only with:\n"
             '{"steps":[{"id":1,"goal":"...","notes":"..."}]}\n'
+            f"Conversation memory: {memory}\n"
             f"Files available: {file_names}\n"
             f"Request: {user_query}\n"
         )
 
     def _nvidia_step_prompt(
-        self, user_query: str, file_names: list[str], step: dict, prior_outputs: list[str]
+        self,
+        user_query: str,
+        file_names: list[str],
+        step: dict,
+        prior_outputs: list[str],
+        memory: dict | None = None,
     ) -> str:
+        memory = memory or {"summary": "", "recent": []}
         return (
             f"{self._system_prompt()}\n"
             "You are executing a step from a plan. Return JSON only.\n"
@@ -126,6 +152,7 @@ class AnalysisPipeline:
             '{"tool":"execute_python","code":"...","requirements":["pkg"],"reasoning":"..."}\n'
             "If no code is needed:\n"
             '{"tool":"none","response":"..."}\n'
+            f"Conversation memory: {memory}\n"
             f"Files available: {file_names}\n"
             f"Request: {user_query}\n"
             f"Step: {step}\n"
@@ -133,12 +160,19 @@ class AnalysisPipeline:
         )
 
     def _nvidia_refine_prompt(
-        self, user_query: str, file_names: list[str], step: dict, error: str
+        self,
+        user_query: str,
+        file_names: list[str],
+        step: dict,
+        error: str,
+        memory: dict | None = None,
     ) -> str:
+        memory = memory or {"summary": "", "recent": []}
         return (
             f"{self._system_prompt()}\n"
             "The previous execution failed. Provide corrected code only.\n"
             '{"tool":"execute_python","code":"...","requirements":["pkg"],"reasoning":"..."}\n'
+            f"Conversation memory: {memory}\n"
             f"Files available: {file_names}\n"
             f"Request: {user_query}\n"
             f"Step: {step}\n"
@@ -152,7 +186,9 @@ class AnalysisPipeline:
         step: dict,
         error: str,
         attempt: int,
+        memory: dict | None = None,
     ) -> str:
+        memory = memory or {"summary": "", "recent": []}
         approach_note = ""
         if attempt >= 10:
             approach_note = (
@@ -172,6 +208,7 @@ class AnalysisPipeline:
             f"{approach_note}"
             f"{missing_note}"
             '{"tool":"execute_python","code":"...","requirements":["pkg"],"reasoning":"..."}\n'
+            f"Conversation memory: {memory}\n"
             f"Files available: {file_names}\n"
             f"Request: {user_query}\n"
             f"Step: {step}\n"
@@ -180,12 +217,14 @@ class AnalysisPipeline:
         )
 
     def _nvidia_judge_prompt(
-        self, user_query: str, plan: dict, outputs: list[str]
+        self, user_query: str, plan: dict, outputs: list[str], memory: dict | None = None
     ) -> str:
+        memory = memory or {"summary": "", "recent": []}
         return (
             f"{self._system_prompt()}\n"
             "Judge if the analysis fully answers the user's question. Return JSON only:\n"
             '{"done":true,"reason":"...","missing":"..."}\n'
+            f"Conversation memory: {memory}\n"
             f"Request: {user_query}\n"
             f"Plan: {plan}\n"
             f"Outputs: {outputs}\n"
@@ -219,6 +258,7 @@ class AnalysisPipeline:
         uploaded_files: dict[str, Any],
         artifact_dir: str,
         status_cb: Optional[callable] = None,
+        memory: dict | None = None,
     ) -> dict:
         def status(message: str) -> None:
             if status_cb:
@@ -246,7 +286,7 @@ class AnalysisPipeline:
             file_names = list(uploaded_files.keys())
             status("planning analysis")
             plan_response = self._call_nvidia_text(
-                self._nvidia_plan_prompt(user_query, file_names)
+                self._nvidia_plan_prompt(user_query, file_names, memory)
             )
             plan = self._extract_json(plan_response)
             if plan.get("tool") == "error":
@@ -265,7 +305,7 @@ class AnalysisPipeline:
                 goal = step.get("goal", "step")
                 status(f"step {idx}/{max_steps}: {goal}")
                 step_result = self._call_nvidia_text(
-                    self._nvidia_step_prompt(user_query, file_names, step, outputs)
+                    self._nvidia_step_prompt(user_query, file_names, step, outputs, memory)
                 )
                 action = self._extract_json(step_result)
                 if action.get("tool") == "error":
@@ -300,6 +340,7 @@ class AnalysisPipeline:
                             step,
                             result.get("error", ""),
                             attempt,
+                            memory,
                         )
                     )
                     refine_action = self._extract_json(refine)
@@ -337,14 +378,16 @@ class AnalysisPipeline:
 
                 status("judging completion")
                 judge = self._extract_json(
-                    self._call_nvidia_text(self._nvidia_judge_prompt(user_query, plan, outputs))
+                    self._call_nvidia_text(
+                        self._nvidia_judge_prompt(user_query, plan, outputs, memory)
+                    )
                 )
                 if judge.get("done") is True:
                     break
                 if judge.get("missing"):
                     status("updating plan")
                     plan_response = self._call_nvidia_text(
-                        self._nvidia_plan_prompt(user_query, file_names)
+                        self._nvidia_plan_prompt(user_query, file_names, memory)
                     )
                     plan = self._extract_json(plan_response)
                     steps = plan.get("steps", steps)
@@ -359,10 +402,7 @@ class AnalysisPipeline:
                 }
 
             status("summarizing")
-            final_text = self._call_nvidia_text(
-                "Summarize the analysis clearly based on these outputs:\n"
-                + "\n".join(outputs)
-            )
+            final_text = self._call_nvidia_text(self._output_prompt(user_query, outputs))
             status("done")
             return {
                 "success": True,
