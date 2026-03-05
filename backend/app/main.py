@@ -132,10 +132,20 @@ def get_result(run_id: str):
 def get_provider():
     return {
         "provider": pipeline._provider(),
-        "nv_api_key_present": bool(os.getenv("NV_API_KEY")),
+        "llm_provider_env": os.getenv("LLM_PROVIDER"),
+        "gemini_key_present": bool(os.getenv("GEMINI_API_KEY")),
         "openai_key_present": bool(os.getenv("OPENAI_API_KEY")),
+        "nvidia_key_present": bool(os.getenv("NVIDIA_API_KEY")),
+        "nv_api_key_present": bool(os.getenv("NV_API_KEY")),
+        "ollama_api_key_present": bool(os.getenv("OLLAMA_API_KEY")),
+        "gemini_model": os.getenv("GEMINI_MODEL"),
+        "openai_model": os.getenv("OPENAI_MODEL"),
+        "nvidia_model": os.getenv("NVIDIA_MODEL"),
+        "nvidia_base_url": os.getenv("NVIDIA_BASE_URL"),
         "nv_api_model": os.getenv("NV_API_MODEL"),
         "nv_api_url": os.getenv("NV_API_URL"),
+        "ollama_model": os.getenv("OLLAMA_MODEL"),
+        "ollama_base_url": os.getenv("OLLAMA_BASE_URL"),
     }
 
 

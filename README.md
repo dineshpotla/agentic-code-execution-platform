@@ -25,12 +25,24 @@ End-to-end starter project for an LLM that writes and executes Python in a locke
    ```
 3. Create `backend/.env` with your keys:
    ```
+   LLM_PROVIDER=openai
    OPENAI_API_KEY=YOUR_KEY
    OPENAI_MODEL=gpt-4o-mini
-   NV_API_KEY=YOUR_KEY
-   NV_API_MODEL=moonshotai/kimi-k2.5
-   NV_API_URL=https://integrate.api.nvidia.com/v1/chat/completions
+   GEMINI_API_KEY=YOUR_KEY
+   GEMINI_MODEL=models/gemma-3-27b-it
+   NVIDIA_API_KEY=YOUR_KEY
+   NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+   NVIDIA_MODEL=qwen/qwen3.5-9b
+   OLLAMA_BASE_URL=http://localhost:11434/v1
+   OLLAMA_MODEL=qwen3.5:9b
    ```
+
+   Provider selection:
+   - `LLM_PROVIDER=openai` uses `OPENAI_API_KEY` + `OPENAI_MODEL`
+   - `LLM_PROVIDER=gemini` uses `GEMINI_API_KEY` + `GEMINI_MODEL`
+   - `LLM_PROVIDER=nvidia` uses `NVIDIA_API_KEY` + `NVIDIA_MODEL` via NVIDIA endpoints
+   - `LLM_PROVIDER=ollama` uses local Ollama via `OLLAMA_BASE_URL` + `OLLAMA_MODEL`
+   - Backward compatibility: legacy `NV_API_KEY`, `NV_API_URL`, and `NV_API_MODEL` are still accepted.
 
 ## Run
 ```bash
@@ -43,3 +55,6 @@ Open `http://localhost:8000` and upload a CSV, then ask questions.
 - The sandbox image is `code-sandbox:py311`.
 - Artifacts (e.g., charts) are served from `/artifacts/<run_id>/`.
 - Code validation uses a whitelist of safe imports in `backend/app/security/validators.py`.
+- With `LLM_PROVIDER=ollama`, reasoning tokens are streamed into live status updates (shown as `thinking: ...`).
+- OpenAI-compatible flows now run with a supervisor+judge loop: execution errors are fed back to the agent for replanning, and answers are judged for completeness before returning.
+- For missing dependencies, the agent attempts to add/install requirements before execution retries.
